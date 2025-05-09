@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Editable HTML Viewer</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      font-family: sans-serif;
+    }
+    #left {
+      width: 50%;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+      border-right: 2px solid #ccc;
+      transition: width 0.3s ease;
+    }
+    #left.collapsed {
+      width: 0;
+      overflow: hidden;
+    }
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding: 10px;
+      border-bottom: 1px solid #ccc;
+    }
+    #tabs {
+      display: flex;
+      flex-wrap: wrap;
+      background: #f4f4f4;
+      border-bottom: 1px solid #ccc;
+    }
+    .tab {
+      padding: 6px 10px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      margin: 4px 4px 0 0;
+      border-radius: 4px 4px 0 0;
+      background: #eaeaea;
+      display: flex;
+      align-items: center;
+    }
+    .tab.active {
+      background: #ddd;
+      font-weight: bold;
+    }
+    .close-btn {
+      margin-left: 6px;
+      cursor: pointer;
+      color: red;
+    }
+    #editor {
+      flex-grow: 1;
+      padding: 10px;
+      border: none;
+      resize: none;
+      font-family: monospace;
+      font-size: 14px;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    iframe {
+      flex-grow: 1;
+      height: 100%;
+      width: 100%;
+      border: none;
+    }
+    button {
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="left">
+  <div id="controls">
+    <input type="file" id="fileInput" accept=".html,.js,.css" multiple>
+    <button id="addTabButton">➕ Add Tab</button>
+    <button id="refreshButton">🔄 Refresh</button>
+    <button id="undoButton">↶ Undo</button>
+    <button id="redoButton">↷ Redo</button>
+    <button id="downloadButton">⬇ Download</button>
+    <button id="collapseButton">⯈ Collapse</button>
+  </div>
+  <div id="tabs"></div>
+  <textarea id="editor" placeholder="Upload files to edit and preview"></textarea>
+</div>
+
+<iframe id="preview"></iframe>
+
+<script>
+  const fileInput = document.getElementById('fileInput');
+  const addTabButton = document.getElementById('addTabButton');
+  const tabsContainer = document.getElementById('tabs');
+  const preview = document.getElementById('preview');
+  const editor = document.getElementById('editor');
+  const refreshButton = document.getElementById('refreshButton');
+  const undoButton = document.getElementById('undoButton');
+  const redoButton = document.getElementById('redoButton');
+  const downloadButton = document.getElementById('downloadButton');
+  const collapseButton = document.getElementById('collapseButton');
+  const leftPane = document.getElementById('left');
+
+  let fileData = {};
+  let currentFile = null;
+
+  fileInput.addEventListener('change', (event) => {
+    const files = Array.from(event.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        fileData[file.name] = e.target.result;
+        createTab(file.name);
+        if (!currentFile) loadFile(file.name);
+      };
+      reader.readAsText(file);
+    });
+  });
+
+  addTabButton.addEventListener('click', () => {
+    const name = prompt('Enter new file name:');
+    if (name && !fileData[name]) {
+      fileData[name] = '';
+      createTab(name);
+      loadFile(name);
+    }
+  });
+
+  function createTab(filename) {
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.textContent = filename;
+    tab.id = 'tab-' + filename;
+
+    const closeBtn = document.createElement('span');
+    closeBtn.textContent = '✕';
+    closeBtn.className = 'close-btn';
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      delete fileData[filename];
+      tab.remove();
+      if (currentFile === filename) {
+        currentFile = null;
+        editor.value = '';
+        preview.src = '';
+      }
+    };
+
+    tab.appendChild(closeBtn);
+    tab.onclick = () => {
+      saveCurrentFile();
+      loadFile(filename);
+    };
+
+    tabsContainer.appendChild(tab);
+    makeTabsSortable();
+  }
+
+  function makeTabsSortable() {
+    let dragSrcEl = null;
+    tabsContainer.querySelectorAll('.tab').forEach(tab => {
+      tab.setAttribute('draggable', true);
+      tab.ondragstart = (e) => {
+        dragSrcEl = tab;
+        e.dataTransfer.effectAllowed = 'move';
+      };
+      tab.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      };
+      tab.ondrop = (e) => {
+        e.preventDefault();
+        if (dragSrcEl && dragSrcEl !== tab) {
+          tabsContainer.insertBefore(dragSrcEl, tab);
+        }
+      };
+    });
+  }
+
+  function loadFile(filename) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const tab = document.getElementById('tab-' + filename);
+    if (tab) tab.classList.add('active');
+    editor.value = fileData[filename];
+    currentFile = filename;
+    updatePreview();
+  }
+
+  function saveCurrentFile() {
+    if (currentFile) {
+      fileData[currentFile] = editor.value;
+    }
+  }
+
+  function inlineAssets(html) {
+    // Inline <link href="style.css"> with <style>...</style>
+    html = html.replace(/<link\s+[^>]*href=["']([^"']+)["'][^>]*>/gi, (match, href) => {
+      return fileData[href] ? `<style>${fileData[href]}</style>` : match;
+    });
+
+    // Inline <script src="script.js"></script> with inline content
+    html = html.replace(/<script\s+[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (match, src) => {
+      return fileData[src] ? `<script>${fileData[src]}</script>` : match;
+    });
+
+    // Replace <a href="something.html"> with onclick to load tab
+    html = html.replace(/<a\s+[^>]*href=["']([^"']+)["']/gi, (match, href) => {
+      if (fileData[href]) {
+        return match.replace(`href="${href}"`, `href="#" onclick="parent.loadFromLink('${href}'); return false;"`);
+      }
+      return match;
+    });
+
+    return html;
+  }
+
+  function updatePreview() {
+    saveCurrentFile();
+    const rawHTML = editor.value;
+    const inlinedHTML = inlineAssets(rawHTML);
+    const blob = new Blob([inlinedHTML], { type: 'text/html' });
+    preview.src = URL.createObjectURL(blob);
+  }
+
+  // Allow preview to load other tabs via injected link
+  window.loadFromLink = function(filename) {
+    saveCurrentFile();
+    loadFile(filename);
+  };
+
+  editor.addEventListener('input', () => {
+    saveCurrentFile();
+    updatePreview();
+  });
+
+  refreshButton.addEventListener('click', updatePreview);
+
+  undoButton.addEventListener('click', () => {
+    editor.focus();
+    document.execCommand('undo');
+  });
+
+  redoButton.addEventListener('click', () => {
+    editor.focus();
+    document.execCommand('redo');
+  });
+
+  downloadButton.addEventListener('click', () => {
+    if (!currentFile) return;
+    const blob = new Blob([editor.value], { type: 'text/html' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = currentFile;
+    link.click();
+  });
+
+  collapseButton.addEventListener('click', () => {
+    const collapsed = leftPane.classList.toggle('collapsed');
+    collapseButton.textContent = collapsed ? '⯇ Expand' : '⯈ Collapse';
+  });
+</script>
+
+</body>
+</html>
